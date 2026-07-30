@@ -1,4 +1,9 @@
-"""Production-grade logging configuration with multiple handlers and formatters."""
+"""Production-grade logging configuration with multiple handlers and formatters.
+
+Includes automatic secret redaction via SecretRedactingFilter to ensure no
+sensitive information (passwords, tokens, API keys, PII) is ever written
+to log files or console output.
+"""
 
 import logging
 import sys
@@ -10,6 +15,7 @@ from colorlog import ColoredFormatter
 from pythonjsonlogger import jsonlogger
 
 from src.config.settings import config
+from src.utils.secret_redactor import SecretRedactingFilter
 
 
 def setup_logger(name: Optional[str] = None) -> logging.Logger:
@@ -139,10 +145,25 @@ def setup_logger(name: Optional[str] = None) -> logging.Logger:
         debug_handler.setFormatter(json_formatter)
         logger.addHandler(debug_handler)
 
+    # 6. Secret Redaction Filter — applied to logger and all handlers
+    # Ensures no sensitive data (tokens, keys, passwords, PII) is ever logged.
+    if config.LOG_REDACT_SECRETS:
+        redaction_filter = SecretRedactingFilter(redact_pii=config.LOG_REDACT_PII)
+
+        # Add filter to the logger itself (applies before handler processing)
+        if not any(isinstance(f, SecretRedactingFilter) for f in logger.filters):
+            logger.addFilter(redaction_filter)
+
+        # Add filter to every handler so redaction is guaranteed at output
+        for handler in logger.handlers:
+            if not any(isinstance(f, SecretRedactingFilter) for f in handler.filters):
+                handler.addFilter(redaction_filter)
+
     # Log initialization message
     logger.info(
         f"Logger initialized - Environment: {config.APP_ENV}, "
-        f"Level: {config.LOG_LEVEL}, Format: {config.LOG_FORMAT}"
+        f"Level: {config.LOG_LEVEL}, Format: {config.LOG_FORMAT}, "
+        f"SecretRedaction: {config.LOG_REDACT_SECRETS}"
     )
 
     return logger

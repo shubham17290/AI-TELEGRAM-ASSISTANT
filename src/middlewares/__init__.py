@@ -10,6 +10,7 @@ from src.middlewares.registry import (
     create_middleware_chain,
     get_registry,
 )
+from src.middlewares.spam_detection import SpamDetectionMiddleware
 from src.middlewares.user_activity import UserActivityMiddleware
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "ExceptionHandlerMiddleware",
     "UserActivityMiddleware",
     "AuthMiddleware",
+    "SpamDetectionMiddleware",
     # Registry and factory
     "MiddlewareRegistry",
     "get_registry",

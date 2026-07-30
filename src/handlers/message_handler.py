@@ -13,6 +13,7 @@ from src.database.connection import get_session
 from src.services.ai_service import get_ai_service, TokenUsage
 from src.services.conversation_logger import ConversationLogger
 from src.services.conversation_memory import get_conversation_memory
+from src.utils.sanitizer import sanitize_text, escape_html, contains_malicious_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     user_id = user.id
     chat_id = update.effective_chat.id
-    user_message = update.message.text
+    raw_message = update.message.text
 
+    # Sanitize user input
+    user_message = sanitize_text(raw_message)
+
+    # Check for injection attacks
+    if contains_malicious_patterns(user_message):
+        logger.warning(f"Malicious input detected from user {user_id}: {user_message[:100]}")
+        await update.message.reply_text(
+            "❌ Your message was blocked for security reasons. "
+            "Please avoid using special characters or SQL commands."
+        )
+        return
+
+    # Log sanitized preview (never log raw user input)
     logger.info(f"User {user_id} sent message: {user_message[:50]}...")
 
     # Initialize services
@@ -98,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_id=chat_id,
             )
 
-        logger.info(f"Sent response to user {user_id}: {full_response[:50]}...")
+        logger.info(f"Sent response to user {user_id}: {full_response[:50]}...")  # Logged safely, no PII
 
     except Exception as e:
         logger.error(f"Error handling message from user {user_id}: {e}", exc_info=True)

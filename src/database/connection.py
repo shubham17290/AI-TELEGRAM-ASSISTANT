@@ -48,10 +48,22 @@ def init_database(database_url: str = None, database_echo: bool = False) -> None
         else:
             database_url = "sqlite+aiosqlite:///telegram_bot.db"
 
+    # Load timeout config from settings
+    try:
+        from src.config.settings import config as app_config
+        db_query_timeout = app_config.DB_QUERY_TIMEOUT
+        db_pool_timeout = app_config.DB_POOL_TIMEOUT
+    except Exception:
+        db_query_timeout = 10
+        db_pool_timeout = 30
+
     engine = create_async_engine(
         database_url,
         echo=database_echo,
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": db_query_timeout},
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        pool_timeout=db_pool_timeout,
     )
 
     async_session_maker = async_sessionmaker(

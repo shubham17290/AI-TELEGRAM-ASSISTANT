@@ -6,6 +6,7 @@ from src.middlewares.auth import AuthMiddleware
 from src.middlewares.exception_handler import ExceptionHandlerMiddleware
 from src.middlewares.logging import LoggingMiddleware
 from src.middlewares.rate_limit import RateLimitMiddleware
+from src.middlewares.spam_detection import SpamDetectionMiddleware
 from src.middlewares.user_activity import UserActivityMiddleware
 from src.utils.logger import get_logger
 
@@ -34,6 +35,7 @@ class MiddlewareRegistry:
         self._middlewares = {
             "logging": LoggingMiddleware(),
             "rate_limit": RateLimitMiddleware(),
+            "spam_detection": SpamDetectionMiddleware(),
             "exception_handler": ExceptionHandlerMiddleware(),
             "user_activity": UserActivityMiddleware(),
             "auth": AuthMiddleware(enabled=False),  # Disabled by default
@@ -78,9 +80,10 @@ class MiddlewareRegistry:
         The order is important:
         1. Exception handler (innermost - catches all exceptions)
         2. Authentication (checks permissions)
-        3. Rate limiter (prevents abuse)
-        4. User activity (tracks interactions)
-        5. Logging (outermost - logs everything)
+        3. Spam detection (filters spam messages)
+        4. Rate limiter (prevents abuse)
+        5. User activity (tracks interactions)
+        6. Logging (outermost - logs everything)
 
         Returns:
             List of middlewares in execution order
@@ -92,6 +95,7 @@ class MiddlewareRegistry:
         return [
             self._middlewares["exception_handler"],
             self._middlewares["auth"],
+            self._middlewares["spam_detection"],
             self._middlewares["rate_limit"],
             self._middlewares["user_activity"],
             self._middlewares["logging"],

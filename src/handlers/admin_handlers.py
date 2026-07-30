@@ -141,7 +141,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as e:
         logger.error(f"Error fetching stats: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error fetching statistics: {str(e)}")
+        await update.message.reply_text("❌ Error fetching statistics. Please try again later.")
 
 
 @admin_only
@@ -193,7 +193,7 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as e:
         logger.error(f"Error fetching users: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error fetching user statistics: {str(e)}")
+        await update.message.reply_text("❌ Error fetching user statistics. Please try again later.")
 
 
 @admin_only
@@ -313,7 +313,7 @@ async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     except Exception as e:
         logger.error(f"Error during broadcast: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error during broadcast: {str(e)}")
+        await update.message.reply_text("❌ Error during broadcast. Please try again later.")
     finally:
         # Clean up context
         context.user_data.pop('broadcast_message', None)
@@ -351,7 +351,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 lines = all_lines[-lines_to_fetch:] if len(all_lines) > lines_to_fetch else all_lines
         except Exception as e:
             logger.error(f"Error reading log file: {e}")
-            await update.message.reply_text(f"❌ Error reading log file: {str(e)}")
+            await update.message.reply_text("❌ Error reading log file. Please try again later.")
             return
 
         if not lines:
@@ -387,7 +387,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     except Exception as e:
         logger.error(f"Error fetching logs: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error fetching logs: {str(e)}")
+        await update.message.reply_text("❌ Error fetching logs. Please try again later.")
 
 
 @admin_only
@@ -426,7 +426,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         logger.error(f"Error during restart: {e}", exc_info=True)
         try:
-            await update.message.reply_text(f"❌ Error during restart: {str(e)}")
+            await update.message.reply_text("❌ Error during restart. Please try again later.")
         except:
             pass
         sys.exit(1)
@@ -498,6 +498,6 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except Exception as e:
         logger.error(f"Error checking health: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Error checking health: {str(e)}")
+        await update.message.reply_text("❌ Error checking health. Please try again later.")
 
 

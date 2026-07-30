@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from src.database.connection import get_session
 from src.services.conversation_logger import ConversationLogger
+from src.utils.sanitizer import sanitize_text, sanitize_command_argument, escape_html
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +136,11 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info(f"User {user.id} sent unknown command: {command}")
 
-    response = (
-        f"❓ Unknown command: {command}\n\n"
-        "Use /help to see available commands."
-    )
+    # Escape user-provided command to prevent HTML injection
+    safe_command = escape_html(command)
+    response = f"❓ Unknown command: {safe_command}\n\n" "Use /help to see available commands."
 
-    await update.message.reply_text(response)
+    await update.message.reply_html(response)
 
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -157,11 +157,12 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     logger.info(f"User {user_id} requested conversation history")
 
-    # Parse page number from command arguments
+    # Parse page number from command arguments (sanitized)
     page = 1
     if context.args and len(context.args) > 0:
         try:
-            page = int(context.args[0])
+            sanitized_arg = sanitize_command_argument(context.args[0])
+            page = int(sanitized_arg)
             if page < 1:
                 page = 1
         except (ValueError, IndexError):
@@ -182,15 +183,16 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Format response
     if not records:
         response = (
-            "📭 <b>No conversation history yet</b>\n\n"
-            "Start chatting to build your history!"
+            "📭 <b>No conversation history yet</b>\n\n" "Start chatting to build your history!"
         )
     else:
         response = f"📜 <b>Conversation History</b> (Page {page}/{total_pages})\n\n"
 
         for idx, record in enumerate(records, 1):
             # Format timestamp
-            timestamp = record.created_at.strftime("%Y-%m-%d %H:%M") if record.created_at else "Unknown"
+            timestamp = (
+                record.created_at.strftime("%Y-%m-%d %H:%M") if record.created_at else "Unknown"
+            )
 
             # Truncate long messages
             content = record.content
@@ -202,8 +204,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             role_name = "You" if record.role == "user" else "AI"
 
             response += (
-                f"{idx}. {role_emoji} <b>{role_name}</b> ({timestamp})\n"
-                f"   {content}\n\n"
+                f"{idx}. {role_emoji} <b>{role_name}</b> ({timestamp})\n" f"   {content}\n\n"
             )
 
         # Add pagination info

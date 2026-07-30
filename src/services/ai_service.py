@@ -65,7 +65,7 @@ class OpenAIService:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((OpenAIServiceError,)),
+        retry=retry_if_exception_type((OpenAIServiceError, asyncio.TimeoutError)),
         before_sleep=lambda retry_state: logger.warning(
             f"Retrying OpenAI API call (attempt {retry_state.attempt_number})"
         ),
@@ -84,15 +84,19 @@ class OpenAIService:
 
         Raises:
             OpenAIServiceError: If API call fails after retries
+            asyncio.TimeoutError: If the API call exceeds the configured timeout
         """
         try:
-            stream = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True,
-                temperature=0.7,
-                max_tokens=2000,
-            )
+            timeout = config.API_TIMEOUT
+            async with asyncio.timeout(timeout):
+                stream = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    stream=True,
+                    temperature=0.7,
+                    max_tokens=2000,
+                    timeout=timeout,
+                )
 
             full_response = ""
             token_usage = None

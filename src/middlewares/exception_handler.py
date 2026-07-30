@@ -1,4 +1,9 @@
-"""Exception handling middleware for Telegram bot handlers."""
+"""Exception handling middleware for Telegram bot handlers.
+
+In production mode, NEVER leaks stack traces or internal server details
+to the user. All errors are logged internally with full details, and only
+generic, user-friendly messages are sent to the client.
+"""
 
 import traceback
 from typing import Callable
@@ -6,6 +11,7 @@ from typing import Callable
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from src.config.settings import config
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,6 +22,8 @@ class ExceptionHandlerMiddleware:
     Global exception handling middleware.
 
     Catches and logs exceptions from handlers, preventing bot crashes.
+    In production, error messages sent to the user NEVER contain stack
+    traces or internal implementation details.
     """
 
     async def __call__(
@@ -45,6 +53,9 @@ class ExceptionHandlerMiddleware:
         """
         Handle and log the exception.
 
+        Logs the full exception details internally (with traceback), but
+        sends only a generic message to the user.
+
         Args:
             update: Telegram update object
             context: Bot context
@@ -54,14 +65,13 @@ class ExceptionHandlerMiddleware:
         user_id = update.effective_user.id if update.effective_user else "Unknown"
         chat_id = update.effective_chat.id if update.effective_chat else "Unknown"
 
-        # Log the exception with full traceback
+        # Log the exception with full traceback (internal only)
         logger.error(
-            f"Exception in handler - User: {user_id}, Chat: {chat_id}, "
-            f"Error: {str(exception)}",
+            f"Exception in handler - User: {user_id}, Chat: {chat_id}",
             exc_info=True,
         )
 
-        # Send user-friendly error message
+        # Send user-friendly error message (NEVER leak stack traces or details)
         try:
             if update.effective_chat:
                 error_message = self._get_user_friendly_message(exception)
@@ -77,13 +87,23 @@ class ExceptionHandlerMiddleware:
         """
         Generate a user-friendly error message.
 
+        In production, this always returns a generic message regardless of
+        the exception type to avoid leaking internal information.
+
         Args:
             exception: Exception that occurred
 
         Returns:
-            User-friendly error message
+            User-friendly error message (never contains stack trace or details)
         """
-        # Map common exceptions to user-friendly messages
+        if config.is_production:
+            # Production: always return a generic message — no details leaked
+            return (
+                "❌ An unexpected error occurred. Our team has been notified. "
+                "Please try again later."
+            )
+
+        # Development: provide slightly more context (but still no stack trace)
         error_type = type(exception).__name__
 
         error_messages = {
@@ -95,9 +115,7 @@ class ExceptionHandlerMiddleware:
             "TimeoutError": "⏱️ Request timed out. Please try again.",
         }
 
-        message = error_messages.get(
+        return error_messages.get(
             error_type,
             "❌ An unexpected error occurred. Our team has been notified. Please try again later.",
         )
-
-        return message

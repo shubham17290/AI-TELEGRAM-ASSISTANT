@@ -83,10 +83,29 @@ class Config(BaseSettings):
 
     # Security
     SECRET_KEY: str = Field(description="Secret key for session encryption")
+    ADMIN_TELEGRAM_ID: Optional[int] = Field(default=None, description="Telegram user ID of the admin")
 
     # Rate Limiting
     RATE_LIMIT: int = Field(default=30, ge=1, description="Rate limit per period")
     RATE_LIMIT_PERIOD: int = Field(default=60, ge=1, description="Rate limit period in seconds")
+    RATE_LIMIT_BURST: int = Field(default=5, ge=1, description="Max burst requests in short window")
+    RATE_LIMIT_BURST_PERIOD: int = Field(default=5, ge=1, description="Burst window in seconds")
+
+    # Spam Detection
+    SPAM_DETECTION_ENABLED: bool = Field(default=True, description="Enable spam detection middleware")
+    SPAM_MAX_DUPLICATES: int = Field(default=3, ge=1, description="Max duplicate messages before flagging")
+    SPAM_DUPLICATE_WINDOW: int = Field(default=60, ge=1, description="Duplicate detection window in seconds")
+    SPAM_MAX_URLS: int = Field(default=3, ge=0, description="Max URLs per message before flagging")
+    SPAM_MAX_MESSAGE_LENGTH: int = Field(default=4096, ge=1, description="Max message length in characters")
+
+    # Timeouts (in seconds)
+    API_TIMEOUT: int = Field(default=30, ge=1, le=300, description="Timeout for external API calls")
+    DB_QUERY_TIMEOUT: int = Field(default=10, ge=1, le=60, description="Timeout for database queries")
+    DB_POOL_TIMEOUT: int = Field(default=30, ge=1, description="Database connection pool timeout")
+
+    # Secure Logging
+    LOG_REDACT_SECRETS: bool = Field(default=True, description="Redact secrets from log output")
+    LOG_REDACT_PII: bool = Field(default=True, description="Redact PII from log output")
 
     # Environment-specific configurations
     @property
@@ -217,6 +236,90 @@ class Config(BaseSettings):
             return self.ANTHROPIC_API_KEY
         else:
             raise ValueError(f"Unsupported AI provider: {self.AI_PROVIDER}")
+
+    def validate_startup(self) -> list[str]:
+        """
+        Perform strict validation of all required secrets and settings on startup.
+
+        This method goes beyond pydantic field validators to check for:
+        - Placeholder/default secret values that must be changed
+        - Production-specific security requirements
+        - Cross-dependency validation
+
+        Returns:
+            List of warning messages (non-fatal issues found).
+
+        Raises:
+            ConfigError: If any critical validation fails.
+        """
+        warnings: list[str] = []
+        errors: list[str] = []
+
+        # --- Check for placeholder/default secret values ---
+        placeholder_patterns = [
+            "your_secret_key_here",
+            "your_telegram_bot_token_here",
+            "your_openai_api_key_here",
+            "your_anthropic_api_key_here",
+            "change_in_production",
+            "changeme",
+            "example",
+            "placeholder",
+        ]
+
+        def _is_placeholder(value: Optional[str]) -> bool:
+            if not value:
+                return False
+            lower_val = value.lower()
+            return any(p in lower_val for p in placeholder_patterns)
+
+        if _is_placeholder(self.TELEGRAM_BOT_TOKEN):
+            errors.append("TELEGRAM_BOT_TOKEN appears to be a placeholder. Set a real token.")
+
+        if _is_placeholder(self.SECRET_KEY):
+            errors.append("SECRET_KEY appears to be a placeholder. Set a real secret key.")
+
+        if self.OPENAI_API_KEY and _is_placeholder(self.OPENAI_API_KEY):
+            errors.append("OPENAI_API_KEY appears to be a placeholder.")
+
+        if self.ANTHROPIC_API_KEY and _is_placeholder(self.ANTHROPIC_API_KEY):
+            errors.append("ANTHROPIC_API_KEY appears to be a placeholder.")
+
+        # --- Production-specific strict checks ---
+        if self.is_production:
+            # APP_DEBUG must be False in production
+            if self.APP_DEBUG:
+                errors.append("APP_DEBUG must be False in production environment.")
+
+            # SECRET_KEY must not be a common weak value
+            weak_keys = {"secret", "key", "mysecret", "test", "default"}
+            if self.SECRET_KEY.lower() in weak_keys:
+                errors.append("SECRET_KEY is too weak for production.")
+
+            # ADMIN_TELEGRAM_ID should be set in production
+            if self.ADMIN_TELEGRAM_ID is None:
+                warnings.append(
+                    "ADMIN_TELEGRAM_ID is not set. Admin commands will be disabled in production."
+                )
+
+            # LOG_LEVEL should not be DEBUG in production
+            if self.LOG_LEVEL.upper() == "DEBUG":
+                warnings.append(
+                    "LOG_LEVEL is DEBUG in production. Consider using INFO or higher."
+                )
+
+            # DATABASE_ECHO should be False in production
+            if self.DATABASE_ECHO:
+                warnings.append(
+                    "DATABASE_ECHO is enabled in production. SQL queries will be logged."
+                )
+
+        # --- Raise on critical errors ---
+        if errors:
+            error_msg = "Startup validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+            raise ConfigError(error_msg)
+
+        return warnings
 
 
 def load_environment(env_file: Optional[str] = None) -> None:

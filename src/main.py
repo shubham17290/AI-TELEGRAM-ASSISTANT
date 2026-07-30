@@ -104,6 +104,16 @@ async def main() -> None:
         logger.error("TELEGRAM_BOT_TOKEN is not set!")
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is required")
 
+    # Perform strict startup validation of all secrets and settings
+    try:
+        startup_warnings = config.validate_startup()
+        for warning_msg in startup_warnings:
+            logger.warning(f"Startup warning: {warning_msg}")
+        logger.info("Startup validation passed successfully")
+    except Exception as e:
+        logger.error(f"Startup validation failed: {e}")
+        raise
+
     try:
         # Initialize database
         logger.info("Initializing database...")
