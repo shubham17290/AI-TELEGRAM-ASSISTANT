@@ -15,6 +15,7 @@ from tenacity import (
 
 from src.config.settings import config
 from src.services.conversation_memory import get_conversation_memory
+from src.utils.secure_headers import get_secure_openai_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,20 @@ class OpenAIService:
     """
 
     def __init__(self):
-        """Initialize OpenAI service."""
-        self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+        """Initialize OpenAI service with secure HTTP client defaults."""
+        # Use a TLS-verified HTTP client with strict timeouts so the bot
+        # never hangs indefinitely if the OpenAI API is slow or unreachable.
+        secure_kwargs = get_secure_openai_client_kwargs()
+        self.client = AsyncOpenAI(
+            api_key=config.OPENAI_API_KEY,
+            timeout=float(config.API_TIMEOUT),
+            **secure_kwargs,
+        )
         self.model = config.AI_MODEL
         self.conversation_memory = get_conversation_memory()
         self.max_retries = 3
         self.stream_batch_interval = 1.5  # Update message every 1.5 seconds
+        self.api_timeout = float(config.API_TIMEOUT)
 
     @retry(
         stop=stop_after_attempt(3),
@@ -98,28 +107,36 @@ class OpenAIService:
                     timeout=timeout,
                 )
 
-            full_response = ""
-            token_usage = None
+                full_response = ""
+                token_usage = None
 
-            async for chunk in stream:
-                # Extract content
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    full_response += content
-                    yield content, None
+                # IMPORTANT: The timeout MUST also cover the streaming loop,
+                # not just the initial request. This ensures the bot never
+                # hangs indefinitely if the streaming connection stalls.
+                async for chunk in stream:
+                    # Extract content
+                    if chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        yield content, None
 
-                # Extract token usage from the last chunk
-                if chunk.usage is not None:
-                    token_usage = TokenUsage(
-                        prompt_tokens=chunk.usage.prompt_tokens,
-                        completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                    )
+                    # Extract token usage from the last chunk
+                    if chunk.usage is not None:
+                        token_usage = TokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                            total_tokens=chunk.usage.total_tokens,
+                        )
 
-            # Yield token usage at the end
-            if token_usage:
-                yield "", token_usage
+                # Yield token usage at the end
+                if token_usage:
+                    yield "", token_usage
 
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            logger.error(f"OpenAI API call timed out after {config.API_TIMEOUT}s")
+            raise OpenAIServiceError(
+                f"OpenAI API call timed out after {config.API_TIMEOUT}s"
+            ) from e
         except Exception as e:
             logger.error(f"OpenAI API error: {e}", exc_info=True)
             raise OpenAIServiceError(f"OpenAI API call failed: {str(e)}") from e

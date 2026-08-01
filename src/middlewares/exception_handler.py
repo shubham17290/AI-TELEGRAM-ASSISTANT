@@ -12,6 +12,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.config.settings import config
+from src.database.connection import DatabaseTimeoutError
+from src.services.ai_service import OpenAIServiceError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -105,6 +107,19 @@ class ExceptionHandlerMiddleware:
 
         # Development: provide slightly more context (but still no stack trace)
         error_type = type(exception).__name__
+
+        # Custom exception types get user-friendly messages mapped by class,
+        # not just by name, to avoid leaking internal implementation details.
+        if isinstance(exception, DatabaseTimeoutError):
+            return (
+                "⏱️ The database is taking too long to respond. "
+                "Please try again in a moment."
+            )
+        if isinstance(exception, OpenAIServiceError):
+            return (
+                "🤖 The AI service is currently unavailable. "
+                "Please try again in a moment."
+            )
 
         error_messages = {
             "ValueError": "❌ Invalid input provided. Please check your command.",

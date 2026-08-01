@@ -13,7 +13,13 @@ from src.database.connection import get_session
 from src.services.ai_service import get_ai_service, TokenUsage
 from src.services.conversation_logger import ConversationLogger
 from src.services.conversation_memory import get_conversation_memory
-from src.utils.sanitizer import sanitize_text, escape_html, contains_malicious_patterns
+from src.utils.sanitizer import (
+    sanitize_text,
+    sanitize_command_argument,
+    escape_html,
+    contains_malicious_patterns,
+    is_payload_too_large,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = user.id
     chat_id = update.effective_chat.id
     raw_message = update.message.text
+
+    # Reject massive payloads BEFORE sanitization/processing to prevent
+    # memory exhaustion, token waste, or DB bloat.
+    if is_payload_too_large(raw_message):
+        logger.warning(
+            f"Oversized payload rejected from user {user_id}: "
+            f"{len(raw_message)} chars"
+        )
+        await update.message.reply_text(
+            "❌ Your message is too large. "
+            "Please send a shorter message."
+        )
+        return
 
     # Sanitize user input
     user_message = sanitize_text(raw_message)

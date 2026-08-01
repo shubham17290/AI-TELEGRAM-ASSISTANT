@@ -22,6 +22,14 @@ from typing import Optional
 MAX_MESSAGE_LENGTH = 4096
 MAX_COMMAND_ARG_LENGTH = 1024
 
+# Hard limit to reject massive payloads BEFORE any processing.
+# This is a pre-sanitization guard to prevent memory exhaustion attacks.
+MAX_RAW_PAYLOAD_LENGTH = 60000  # 60KB — far above Telegram's real limit
+
+# Threshold above which consecutive whitespace is collapsed.
+# Messages with run-on whitespace (e.g., massive indentation) are normalized.
+MAX_CONSECUTIVE_WHITESPACE = 4
+
 # Control characters to strip (excluding newlines and tabs which are normal)
 _CONTROL_CHARS_PATTERN = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
@@ -67,6 +75,12 @@ def sanitize_text(text: str, max_length: Optional[int] = None) -> str:
 
     max_length = max_length or MAX_MESSAGE_LENGTH
 
+    # 0. Reject massive payloads early (memory exhaustion defense)
+    if is_payload_too_large(text):
+        # Truncate brutally to the max safe length and strip whitespace;
+        # this prevents processing a multi-megabyte string in memory.
+        text = text[:MAX_MESSAGE_LENGTH]
+
     # 1. Strip ASCII control characters (except \n, \r, \t)
     text = _CONTROL_CHARS_PATTERN.sub("", text)
 
@@ -74,11 +88,64 @@ def sanitize_text(text: str, max_length: Optional[int] = None) -> str:
     # This prevents homoglyph attacks and normalises unicode
     text = unicodedata.normalize("NFKC", text)
 
-    # 3. Truncate to safe length
+    # 3. Collapse excessive consecutive whitespace (anti-spam / anti-abuse)
+    text = normalize_whitespace(text)
+
+    # 4. Truncate to safe length
     if len(text) > max_length:
         text = text[:max_length]
 
     return text
+
+
+def is_payload_too_large(text: str, max_raw_length: Optional[int] = None) -> bool:
+    """
+    Check if a raw text payload exceeds the hard size guard.
+
+    This is a pre-processing check used to reject massive payloads before
+    they are loaded into memory or sent to the AI / database.
+
+    Args:
+        text: The raw input text.
+        max_raw_length: Maximum allowed raw length (defaults to 60KB).
+
+    Returns:
+        True if the payload is too large and should be rejected, False otherwise.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    limit = max_raw_length or MAX_RAW_PAYLOAD_LENGTH
+    return len(text) > limit
+
+
+def normalize_whitespace(text: str, max_consecutive: Optional[int] = None) -> str:
+    """
+    Collapse runs of consecutive whitespace characters to a single space.
+
+    Telegram messages can contain a massive run of spaces/tabs/newlines,
+    which wastes tokens, inflates DB storage, and can be used for spam.
+    This function collapses runs longer than ``max_consecutive`` back to a
+    single space.
+
+    Args:
+        text: The text to normalize.
+        max_consecutive: Maximum allowed consecutive whitespace characters
+            before collapsing (defaults to ``MAX_CONSECUTIVE_WHITESPACE``).
+
+    Returns:
+        The normalized text.
+    """
+    if not text:
+        return text
+
+    limit = max_consecutive or MAX_CONSECUTIVE_WHITESPACE
+    if limit <= 0:
+        return text
+
+    # Regex that matches runs of ANY whitespace (space, tab, newline, etc.)
+    # longer than the limit, and replaces them with a single space.
+    pattern = re.compile(rf"(\s{{{limit},}})")
+    return pattern.sub(" ", text)
 
 
 def sanitize_command_argument(arg: str, max_length: Optional[int] = None) -> str:

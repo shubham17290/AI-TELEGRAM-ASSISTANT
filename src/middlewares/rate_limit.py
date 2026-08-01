@@ -1,10 +1,13 @@
 """Rate limiting middleware for Telegram bot handlers.
 
 Provides multi-layer rate limiting:
-- Standard rate limiting (max requests per period)
+- Standard rate limiting (max requests per period) — default: 5 messages per minute
 - Burst detection (rapid requests in a short window)
 - Progressive backoff (repeat offenders get longer cooldowns)
 - Global rate limiting (across all users to prevent total system abuse)
+- "Warn once" behavior: when a user is blocked, only ONE warning message is
+  sent; all subsequent blocked requests are silently ignored until the
+  cooldown expires.
 """
 
 import time
@@ -29,6 +32,8 @@ class RateLimitMiddleware:
     - Burst detection (rapid requests in a short window)
     - Progressive backoff for repeat offenders
     - Global rate limiting (across all users)
+    - "Warn once" per cooldown — only a single warning is sent to the user;
+      subsequent blocked requests are silently dropped until the cooldown ends.
     """
 
     def __init__(
@@ -37,26 +42,35 @@ class RateLimitMiddleware:
         period: Optional[int] = None,
         burst_limit: Optional[int] = None,
         burst_period: Optional[int] = None,
+        warn_once: Optional[bool] = None,
     ):
         """
         Initialize rate limiter.
 
         Args:
-            rate_limit: Maximum number of requests per period (defaults to config value)
-            period: Time period in seconds (defaults to config value)
+            rate_limit: Maximum number of requests per period (defaults to config value, 5)
+            period: Time period in seconds (defaults to config value, 60 = 1 minute)
             burst_limit: Max burst requests in short window (defaults to config value)
             burst_period: Burst window in seconds (defaults to config value)
+            warn_once: If True, only send ONE warning per user per cooldown,
+                then silently ignore blocked requests until the cooldown expires.
+                (Defaults to config value `RATE_LIMIT_WARN_ONCE`.)
         """
         self.rate_limit = rate_limit or config.RATE_LIMIT
         self.period = period or config.RATE_LIMIT_PERIOD
         self.burst_limit = burst_limit or config.RATE_LIMIT_BURST
         self.burst_period = burst_period or config.RATE_LIMIT_BURST_PERIOD
+        self.warn_once = warn_once if warn_once is not None else config.RATE_LIMIT_WARN_ONCE
 
         # Per-user request timestamps: {user_id: [timestamp1, ...]}
         self._requests: dict[int, list[float]] = defaultdict(list)
 
         # Progressive backoff tracking: {user_id: {'violations': int, 'blocked_until': float}}
         self._backoff: dict[int, dict] = {}
+
+        # Tracks whether we already sent the single warning for the current
+        # cooldown cycle: {user_id: bool}. Reset when the backoff expires.
+        self._warned: dict[int, bool] = {}
 
         # Backoff configuration
         self._backoff_base_wait = 60  # 1 minute initial backoff
@@ -76,7 +90,8 @@ class RateLimitMiddleware:
             f"RateLimitMiddleware initialized - "
             f"Limit: {self.rate_limit}/{self.period}s, "
             f"Burst: {self.burst_limit}/{self.burst_period}s, "
-            f"Global: {self._global_rate_limit}/{self._global_period}s"
+            f"Global: {self._global_rate_limit}/{self._global_period}s, "
+            f"WarnOnce: {self.warn_once}"
         )
 
     async def __call__(
@@ -113,11 +128,13 @@ class RateLimitMiddleware:
                     f"Rate limit backoff active for user {user_id} - "
                     f"blocked for {remaining}s (violation #{backoff_data['violations']})"
                 )
-                await self._send_rate_limit_message(update, context, remaining)
+                # Send ONLY ONE warning per cooldown cycle; ignore the rest silently.
+                await self._send_warn_once_message(update, context, user_id, remaining)
                 return None
 
-            # Backoff expired — remove
+            # Backoff expired — remove and reset warning flag
             del self._backoff[user_id]
+            self._warned.pop(user_id, None)
 
         # 2. Clean old requests outside the standard window
         self._requests[user_id] = [
@@ -133,7 +150,7 @@ class RateLimitMiddleware:
                 f"{len(self._requests[user_id])} requests in {self.period}s"
             )
             self._apply_backoff(user_id, current_time)
-            await self._send_rate_limit_message(update, context, self.period)
+            await self._send_warn_once_message(update, context, user_id, self.period)
             return None
 
         # 4. Check burst limit (rapid requests in a short window)
@@ -147,8 +164,8 @@ class RateLimitMiddleware:
                 f"{burst_count} requests in {self.burst_period}s"
             )
             self._apply_backoff(user_id, current_time)
-            await self._send_rate_limit_message(
-                update, context, self.burst_period, burst=True
+            await self._send_warn_once_message(
+                update, context, user_id, self.burst_period, burst=True
             )
             return None
 
@@ -172,35 +189,41 @@ class RateLimitMiddleware:
         # Process the request
         return await next_handler(update, context)
 
-    def _apply_backoff(self, user_id: int, current_time: float) -> None:
+    async def _send_warn_once_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        wait_time: int,
+        burst: bool = False,
+    ) -> None:
         """
-        Apply or escalate progressive backoff for a user.
+        Send a rate-limit warning to the user only ONCE per cooldown cycle.
+
+        When ``warn_once`` is enabled and the user is already blocked, this
+        method suppresses repeated warnings so the user only sees a single
+        polite notice until the cooldown expires.
 
         Args:
+            update: Telegram update object
+            context: Bot context
             user_id: Telegram user ID
-            current_time: Current timestamp
+            wait_time: Wait time in seconds
+            burst: Whether this is a burst limit hit
         """
-        if user_id in self._backoff:
-            prev = self._backoff[user_id]
-            violations = prev["violations"] + 1
-            # Exponential backoff: 60s, 120s, 240s, 480s, ... capped at 3600s
-            wait_time = min(
-                self._backoff_base_wait * (2 ** (violations - 1)),
-                self._backoff_max_wait,
+        # If warn-once is enabled and we already warned this user for the
+        # current cooldown cycle, silently ignore the blocked request.
+        if self.warn_once and self._warned.get(user_id, False):
+            logger.debug(
+                f"Rate limit warning suppressed for user {user_id} "
+                f"(warn-once active for current cooldown)"
             )
-        else:
-            violations = 1
-            wait_time = self._backoff_base_wait
+            return
 
-        self._backoff[user_id] = {
-            "violations": violations,
-            "blocked_until": current_time + wait_time,
-        }
+        # Mark that we sent the warning so subsequent blocked requests are silent
+        self._warned[user_id] = True
 
-        logger.warning(
-            f"Applied backoff for user {user_id} - "
-            f"violation #{violations}, blocked for {wait_time}s"
-        )
+        await self._send_rate_limit_message(update, context, wait_time, burst=burst)
 
     async def _send_rate_limit_message(
         self,
@@ -245,6 +268,36 @@ class RateLimitMiddleware:
         except Exception as e:
             logger.error(f"Failed to send rate limit message: {e}")
 
+    def _apply_backoff(self, user_id: int, current_time: float) -> None:
+        """
+        Apply or escalate progressive backoff for a user.
+
+        Args:
+            user_id: Telegram user ID
+            current_time: Current timestamp
+        """
+        if user_id in self._backoff:
+            prev = self._backoff[user_id]
+            violations = prev["violations"] + 1
+            # Exponential backoff: 60s, 120s, 240s, 480s, ... capped at 3600s
+            wait_time = min(
+                self._backoff_base_wait * (2 ** (violations - 1)),
+                self._backoff_max_wait,
+            )
+        else:
+            violations = 1
+            wait_time = self._backoff_base_wait
+
+        self._backoff[user_id] = {
+            "violations": violations,
+            "blocked_until": current_time + wait_time,
+        }
+
+        logger.warning(
+            f"Applied backoff for user {user_id} - "
+            f"violation #{violations}, blocked for {wait_time}s"
+        )
+
     def _cleanup_old_data(self, current_time: float) -> None:
         """
         Clean up old rate limit data.
@@ -256,6 +309,7 @@ class RateLimitMiddleware:
         for user_id in list(self._backoff.keys()):
             if current_time > self._backoff[user_id]["blocked_until"] + self._backoff_decay:
                 del self._backoff[user_id]
+                self._warned.pop(user_id, None)
 
         # Clean up empty request lists
         for user_id in list(self._requests.keys()):
@@ -305,6 +359,7 @@ class RateLimitMiddleware:
             del self._requests[user_id]
         if user_id in self._backoff:
             del self._backoff[user_id]
+        self._warned.pop(user_id, None)
         logger.info(f"Rate limits reset for user {user_id}")
 
     def clear_all_limits(self) -> None:
@@ -312,4 +367,5 @@ class RateLimitMiddleware:
         self._requests.clear()
         self._backoff.clear()
         self._global_requests.clear()
+        self._warned.clear()
         logger.info("All rate limits cleared")

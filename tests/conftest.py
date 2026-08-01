@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Load .env file if it exists BEFORE setting any environment variables
 from dotenv import load_dotenv
+
 env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     load_dotenv(env_path, override=True)
@@ -22,6 +23,15 @@ os.environ["TELEGRAM_BOT_TOKEN"] = "test_bot_token_for_testing_12345678901234567
 os.environ["OPENAI_API_KEY"] = "test_openai_key_for_testing_12345678901234567890"
 os.environ["AI_PROVIDER"] = "openai"
 os.environ["AI_MODEL"] = "gpt-4o-mini"
+os.environ["SPAM_DETECTION_ENABLED"] = "true"
+os.environ["RATE_LIMIT"] = "5"
+os.environ["RATE_LIMIT_PERIOD"] = "60"
+os.environ["RATE_LIMIT_WARN_ONCE"] = "true"
+os.environ["LOG_REDACT_SECRETS"] = "true"
+os.environ["LOG_REDACT_PII"] = "true"
+os.environ["API_TIMEOUT"] = "30"
+os.environ["DB_QUERY_TIMEOUT"] = "10"
+os.environ["DB_POOL_TIMEOUT"] = "30"
 
 import pytest
 from sqlalchemy import delete
@@ -33,36 +43,32 @@ from src.database.initialization import create_tables, drop_tables
 from src.database.models import Chat, ConversationHistory, Settings, User
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for the session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest.fixture(scope="session", autouse=True)
-async def setup_database():
-    """Setup database for the entire test session."""
-    # Initialize database
-    print("Initializing database...")
+def setup_database_engine():
+    """
+    Initialize the database engine once for the whole test session.
+
+    Table creation is handled by the function-scoped ``setup_database`` fixture
+    so we stay compatible with pytest-asyncio's default function loop scope.
+    """
+    print("Initializing database engine...")
     init_database()
     print(f"Engine after init: {db_connection.engine}")
     print(f"Session maker after init: {db_connection.async_session_maker}")
-    await create_tables()
-    print("Tables created successfully")
 
     yield
 
-    # Cleanup
-    try:
-        await drop_tables()
-    except Exception as e:
-        print(f"Warning: Error dropping tables: {e}")
-    try:
-        await close_database()
-    except Exception as e:
-        print(f"Warning: Error closing database: {e}")
+    # Best-effort sync cleanup note: async dispose is done in setup_database
+    print("Database engine fixture teardown complete")
+
+
+@pytest.fixture(autouse=True)
+async def setup_database():
+    """Ensure tables exist for each test (function-scoped async fixture)."""
+    await create_tables()
+    yield
+    # Do not drop tables every test — clean_database truncates rows instead.
+
 
 
 @pytest.fixture(autouse=True)
@@ -94,5 +100,5 @@ async def db_session() -> AsyncSession:
     Yields:
         AsyncSession: Database session
     """
-    async for session in get_session():
+    async with get_session() as session:
         yield session

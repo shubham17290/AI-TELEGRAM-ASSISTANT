@@ -75,7 +75,7 @@ _DEFAULT_TIMEOUT = 30.0
 def get_secure_http_client(
     timeout: Optional[float] = None,
     max_redirects: int = 5,
-    verify_tls: bool = True,
+    verify_tls: Optional[bool] = None,
 ) -> httpx.AsyncClient:
     """
     Create an HTTPX async client with secure defaults.
@@ -83,17 +83,33 @@ def get_secure_http_client(
     Args:
         timeout: Request timeout in seconds (defaults to ``API_TIMEOUT`` config).
         max_redirects: Maximum number of redirects to follow.
-        verify_tls: Whether to verify TLS certificates (always True in production).
+        verify_tls: Whether to verify TLS certificates. When ``None`` (default),
+            TLS verification is ALWAYS enabled in production and enabled in
+            development. Passing ``False`` explicitly in production is rejected
+            for security reasons.
 
     Returns:
         Configured ``httpx.AsyncClient`` instance.
+
+    Raises:
+        ValueError: If ``verify_tls=False`` is requested in production.
     """
+    # Load config for timeout and environment
+    from src.config.settings import config
+
     if timeout is None:
-        try:
-            from src.config.settings import config
-            timeout = float(config.API_TIMEOUT)
-        except Exception:
-            timeout = _DEFAULT_TIMEOUT
+        timeout = float(config.API_TIMEOUT)
+
+    # TLS enforcement: in production, TLS verification is MANDATORY.
+    # It can never be disabled — doing so would expose the bot to
+    # man-in-the-middle attacks on API credentials.
+    if verify_tls is None:
+        verify_tls = True  # Always verify by default
+    elif verify_tls is False and config.is_production:
+        raise ValueError(
+            "TLS certificate verification cannot be disabled in production "
+            "environment. Refusing to create an insecure HTTP client."
+        )
 
     limits = httpx.Limits(
         max_keepalive_connections=10,
@@ -101,8 +117,18 @@ def get_secure_http_client(
         keepalive_expiry=30.0,
     )
 
-    # Configure TLS
-    tls = httpx.create_ssl_context() if verify_tls else None
+    # Configure TLS — always use a secure SSL context when verification is on
+    if verify_tls:
+        tls = httpx.create_ssl_context()
+    else:
+        # Only reachable in development/testing — keep the client usable but
+        # log a loud warning so developers know it is insecure.
+        import logging
+        logging.getLogger(__name__).warning(
+            "Creating HTTP client with TLS verification DISABLED. "
+            "This is only allowed outside production."
+        )
+        tls = False
 
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(
@@ -113,7 +139,7 @@ def get_secure_http_client(
             pool=timeout,
         ),
         limits=limits,
-        verify=tls if verify_tls else False,
+        verify=tls,
         follow_redirects=True,
         max_redirects=max_redirects,
         # Default headers for all requests

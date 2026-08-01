@@ -86,10 +86,16 @@ class Config(BaseSettings):
     ADMIN_TELEGRAM_ID: Optional[int] = Field(default=None, description="Telegram user ID of the admin")
 
     # Rate Limiting
-    RATE_LIMIT: int = Field(default=30, ge=1, description="Rate limit per period")
-    RATE_LIMIT_PERIOD: int = Field(default=60, ge=1, description="Rate limit period in seconds")
-    RATE_LIMIT_BURST: int = Field(default=5, ge=1, description="Max burst requests in short window")
-    RATE_LIMIT_BURST_PERIOD: int = Field(default=5, ge=1, description="Burst window in seconds")
+    # Task requirement: max 5 messages per minute
+    RATE_LIMIT: int = Field(default=5, ge=1, description="Rate limit per period (default 5 messages)")
+    RATE_LIMIT_PERIOD: int = Field(default=60, ge=1, description="Rate limit period in seconds (default 60s = 1 minute)")
+    RATE_LIMIT_BURST: int = Field(default=3, ge=1, description="Max burst requests in short window")
+    RATE_LIMIT_BURST_PERIOD: int = Field(default=3, ge=1, description="Burst window in seconds")
+    # When a user is blocked by rate limiting, only send ONE warning message; ignore the rest silently.
+    RATE_LIMIT_WARN_ONCE: bool = Field(
+        default=True,
+        description="Send only one rate-limit warning to a user, then silently ignore until cooldown expires",
+    )
 
     # Spam Detection
     SPAM_DETECTION_ENABLED: bool = Field(default=True, description="Enable spam detection middleware")

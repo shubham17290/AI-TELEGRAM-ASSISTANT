@@ -12,6 +12,7 @@ from src.middlewares.exception_handler import ExceptionHandlerMiddleware
 from src.middlewares.logging import LoggingMiddleware
 from src.middlewares.rate_limit import RateLimitMiddleware
 from src.middlewares.registry import get_registry
+from src.middlewares.spam_detection import SpamDetectionMiddleware
 from src.middlewares.user_activity import UserActivityMiddleware
 
 
@@ -284,12 +285,13 @@ class TestMiddlewareRegistry:
         registry.initialize()
 
         all_middlewares = registry.get_all()
-        assert len(all_middlewares) == 5
+        assert len(all_middlewares) == 6
         assert "logging" in all_middlewares
         assert "rate_limit" in all_middlewares
         assert "exception_handler" in all_middlewares
         assert "user_activity" in all_middlewares
         assert "auth" in all_middlewares
+        assert "spam_detection" in all_middlewares
 
     def test_get_middleware(self):
         """Test getting middleware by name."""
@@ -311,9 +313,10 @@ class TestMiddlewareRegistry:
         registry = get_registry()
         chain = registry.get_default_chain()
 
-        assert len(chain) == 5
+        assert len(chain) == 6
         assert isinstance(chain[0], ExceptionHandlerMiddleware)
         assert isinstance(chain[1], AuthMiddleware)
-        assert isinstance(chain[2], RateLimitMiddleware)
-        assert isinstance(chain[3], UserActivityMiddleware)
-        assert isinstance(chain[4], LoggingMiddleware)
+        assert isinstance(chain[2], SpamDetectionMiddleware)
+        assert isinstance(chain[3], RateLimitMiddleware)
+        assert isinstance(chain[4], UserActivityMiddleware)
+        assert isinstance(chain[5], LoggingMiddleware)

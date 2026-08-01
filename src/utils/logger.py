@@ -145,12 +145,23 @@ def setup_logger(name: Optional[str] = None) -> logging.Logger:
         debug_handler.setFormatter(json_formatter)
         logger.addHandler(debug_handler)
 
-    # 6. Secret Redaction Filter — applied to logger and all handlers
+    # 6. Secret Redaction Filter — applied to logger, root logger, and all handlers.
     # Ensures no sensitive data (tokens, keys, passwords, PII) is ever logged.
+    #
+    # IMPORTANT: Many modules use `logging.getLogger(__name__)` directly,
+    # which creates child loggers of the ROOT logger. To guarantee redaction
+    # across ALL modules (even those that bypass `src.utils.logger`), the
+    # redaction filter must also be attached to the ROOT logger so that it is
+    # inherited by every child logger in the application.
     if config.LOG_REDACT_SECRETS:
         redaction_filter = SecretRedactingFilter(redact_pii=config.LOG_REDACT_PII)
 
-        # Add filter to the logger itself (applies before handler processing)
+        # Add filter to the root logger so ALL child loggers inherit redaction
+        root_logger = logging.getLogger()
+        if not any(isinstance(f, SecretRedactingFilter) for f in root_logger.filters):
+            root_logger.addFilter(redaction_filter)
+
+        # Add filter to the named logger itself (applies before handler processing)
         if not any(isinstance(f, SecretRedactingFilter) for f in logger.filters):
             logger.addFilter(redaction_filter)
 

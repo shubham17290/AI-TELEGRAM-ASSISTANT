@@ -322,7 +322,7 @@ class TestConfigDefaults:
         assert config.DATABASE_ECHO is False
         assert config.LOG_LEVEL == "INFO"
         assert config.LOG_FORMAT == "json"
-        assert config.RATE_LIMIT == 30
+        assert config.RATE_LIMIT == 5
         assert config.RATE_LIMIT_PERIOD == 60
 
     def test_port_validation(self, monkeypatch):

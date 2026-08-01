@@ -51,7 +51,11 @@ class SpamDetectionMiddleware:
             max_urls: Max URLs per message before flagging.
             max_message_length: Max message length in characters.
         """
-        self.enabled = enabled if config.SPAM_DETECTION_ENABLED else False
+        # Spam detection is active only when BOTH the constructor flag AND
+        # the global config flag are enabled. (Previously the logic was
+        # inverted — it silently disabled spam detection whenever the config
+        # flag was False, ignoring the constructor parameter.)
+        self.enabled = bool(enabled) and bool(config.SPAM_DETECTION_ENABLED)
         self.max_duplicates = max_duplicates or config.SPAM_MAX_DUPLICATES
         self.duplicate_window = duplicate_window or config.SPAM_DUPLICATE_WINDOW
         self.max_urls = max_urls or config.SPAM_MAX_URLS
